@@ -1,7 +1,7 @@
 # 🔵 HV-LazyBackup (Bootloader System)
 
 <p align="center">
-  <img src="assets/hv-lazybackup-architecture-demo-image.png" alt="HV-LazyBackup Architecture Demo" />
+  <img src="assets/hv-lazybackup-architecture-image.png" alt="HV-LazyBackup Architecture Demo" />
 </p>
 
 <p align="center">
