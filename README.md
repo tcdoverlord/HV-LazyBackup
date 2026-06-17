@@ -15,33 +15,33 @@
 
 # 🟢 IMPORTANT CONCEPT
 
-## ⚠️ THIS IS A BOOTLOADER SYSTEM (NOT A SCRIPT COLLECTION)
+## ⚠️ BOOTLOADER SYSTEM (NOT A SCRIPT COLLECTION)
 
-HV-LazyBackup is a **BOOTLOADER / UNPACKER ENGINE** that builds a full Hyper-V backup system dynamically.
+HV-LazyBackup is a **BOOTLOADER / UNPACKER ENGINE** that installs and generates a full Hyper-V backup system dynamically.
 
 ---
 
-# 🚀 ONLY ENTRY FILE
+# 🟢 ONLY ENTRY FILE
 
 ```powershell
 .\HV_LazyBackup_Bootstrap_Setup.ps1
 ```
 
-✔ This is the ONLY file the user runs manually  
-✔ Everything else is generated automatically  
+✔ This is the ONLY file executed manually  
+✔ It installs and builds the full system  
+✔ It generates all runtime scripts automatically  
+❌ It is NOT used for daily backups  
 
 ---
 
 # 🧠 SYSTEM ARCHITECTURE
 
-HV-LazyBackup works in 3 layers:
-
-```
+```text
 BOOTLOADER (Installer / Unpacker)
         ↓
 GENERATED SYSTEM (Scripts + Config)
         ↓
-OPERATION MODE (Backup + Verify execution)
+DAILY OPERATIONS (Backup + Verify)
 ```
 
 ---
@@ -71,22 +71,23 @@ cd <REPO_FOLDER>
 
 ---
 
-## ⚙️ BOOTLOADER (WHAT HAPPENS)
+# ⚙️ BOOTLOADER EXECUTION (WHAT HAPPENS)
 
-During this phase:
+During execution the system is generated dynamically:
 
-### 🖥️ VM DISCOVERY
-- Detects Hyper-V VMs
-- User selects VM
+## 🖥️ VM DISCOVERY
+- Detects Hyper-V environment
+- Lists available virtual machines
+- User selects target VM
 
-### 💽 DRIVE SELECTION
-- User selects backup drive
-- System drive (C:) blocked
+## 💽 DRIVE SELECTION
+- User selects backup storage drive
+- System drive (C:\) is blocked for safety
 
-### 🧠 SYSTEM BUILD
-Creates full environment:
+## 🧠 SYSTEM GENERATION
+Creates full working environment:
 
-```
+```text
 C:\HV-LazyBackup\
 ├── config.json
 ├── logs\
@@ -95,37 +96,33 @@ C:\HV-LazyBackup\
     └── Verify-Backup.ps1
 ```
 
-✔ RESULT: System is INSTALLED but NOT RUN YET
+✔ SYSTEM STATE: READY FOR DAILY OPERATION
 
 ---
 
 # 🚀 DAILY OPERATION MODE (POST INSTALL)
 
-## 🟢 THIS IS HOW YOU USE THE SYSTEM
+## 🧠 SYSTEM STATE MODEL
 
-After installation is complete:
+- BOOTLOADER = INSTALL / GENERATE SYSTEM
+- SCRIPTS = DAILY BACKUP OPERATIONS
+- VERIFY = SAFETY + VALIDATION LAYER
 
 ---
 
 ## 🟢 STEP 1 — OPEN POWERSHELL (ADMIN)
 
-Always run as Administrator
+Always run PowerShell as Administrator
 
 ---
 
-## 🟢 STEP 2 — NAVIGATE TO SYSTEM FOLDER
-
-If default install:
+## 🟢 STEP 2 — NAVIGATE TO INSTALL FOLDER
 
 ```powershell
 cd C:\HV-LazyBackup
 ```
 
-If custom install:
-
-```powershell
-cd <INSTALL_PATH>
-```
+Or custom install path if selected during setup.
 
 ---
 
@@ -139,7 +136,7 @@ What happens:
 - VM state checked
 - Safe shutdown if needed
 - Hyper-V export executed
-- Backup saved to selected drive
+- Backup written to selected drive
 
 ---
 
@@ -159,15 +156,15 @@ Returns:
 
 The backup location is selected during bootloader setup.
 
-```
+```text
 <SELECTED_DRIVE>:\VM_MASTER_BACKUP\VM-NAME-TIMESTAMP\
 ```
 
 ### Example
 
-If user selected `X:` drive:
+If user selects `X:` drive:
 
-```
+```text
 X:\VM_MASTER_BACKUP\GrizTechW-2026-06-16_12-03\
     .vhdx
     .vmcx
@@ -180,28 +177,28 @@ X:\VM_MASTER_BACKUP\GrizTechW-2026-06-16_12-03\
 
 ✔ Admin required  
 ✔ Hyper-V validation  
-✔ Disk selection protection  
-✔ C: drive blocked  
-✔ Confirmation prompts  
+✔ Drive protection (C:\ blocked)  
 ✔ Safe VM shutdown handling  
+✔ Backup verification system  
 
 ---
 
-# 🧠 DESIGN PRINCIPLE
+# 🔥 DESIGN PRINCIPLE
 
-- One BOOTLOADER entry point
-- Dynamic system generation
-- No manual script creation required
-- Fully portable backup framework
+- Single BOOTLOADER entry point
+- Fully dynamic system generation
+- No manual script wiring required
+- Portable backup framework
 
 ---
 
 # ⚠️ STATUS
 
-Release-Safe Bootloader System (v6 concept)
+Release-Safe Bootloader System v1.0
 
 ---
 
 # 👨‍💻 AUTHOR
 
 TCDOverLord
+v
