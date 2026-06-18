@@ -106,8 +106,54 @@ function Write-Step {
     }
 }
 
+function Get-DriveLetterFromPath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $null
+    }
+
+    $match = [regex]::Match($Path, "^[A-Za-z]:")
+    if (-not $match.Success) {
+        return $null
+    }
+
+    return $match.Value.TrimEnd(":").ToUpperInvariant()
+}
+
+function Get-VMStorageDrives {
+    param([Parameter(Mandatory = $true)][string]$VMName)
+
+    $drives = New-Object System.Collections.Generic.List[string]
+
+    try {
+        $hardDisks = @(Get-VMHardDiskDrive -VMName $VMName -ErrorAction Stop)
+        foreach ($disk in $hardDisks) {
+            $drive = Get-DriveLetterFromPath -Path $disk.Path
+            if ($drive -and -not $drives.Contains($drive)) {
+                $drives.Add($drive)
+            }
+        }
+    }
+    catch {
+        Stop-Bootstrap "Unable to inspect VM disk locations for '$VMName'. $($_.Exception.Message)"
+    }
+
+    return @($drives)
+}
+
+function Get-SafeBackupDrives {
+    param([string[]]$BlockedDrives)
+
+    $blocked = @($BlockedDrives | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_.Trim().TrimEnd(":").ToUpperInvariant() } | Sort-Object -Unique)
+
+    return @(Get-PSDrive -PSProvider FileSystem |
+        Where-Object { $blocked -notcontains $_.Name.ToUpperInvariant() } |
+        Sort-Object Name)
+}
+
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "HV-LazyBackup Bootloader Builder v1.2" -ForegroundColor Cyan
+Write-Host "HV-LazyBackup Bootloader Builder v1.3" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
 # -----------------------------------------
@@ -177,13 +223,28 @@ if (-not $vm) {
 
 Write-Host "VM selected: $vmName" -ForegroundColor Green
 
+$vmStorageDrives = @(Get-VMStorageDrives -VMName $vmName)
+$blockedBackupDrives = @("C") + $vmStorageDrives | Sort-Object -Unique
+
 # -----------------------------------------
 # BACKUP DRIVE
 # -----------------------------------------
 Write-Host ""
-Write-Host "AVAILABLE DRIVES:" -ForegroundColor Yellow
-Get-PSDrive -PSProvider FileSystem | ForEach-Object {
+Write-Host "SAFE BACKUP DRIVES:" -ForegroundColor Yellow
+$safeBackupDrives = @(Get-SafeBackupDrives -BlockedDrives $blockedBackupDrives)
+
+if ($safeBackupDrives.Count -eq 0) {
+    Stop-Bootstrap "No safe backup drives are available. Blocked drives: $($blockedBackupDrives -join ', ')"
+}
+
+$safeBackupDrives | ForEach-Object {
     Write-Host "$($_.Name): $($_.Root)"
+}
+
+Write-Host ""
+Write-Host "Blocked backup drives: $($blockedBackupDrives -join ', ')" -ForegroundColor Yellow
+if ($vmStorageDrives.Count -gt 0) {
+    Write-Host "VM storage drive(s) blocked: $($vmStorageDrives -join ', ')" -ForegroundColor Yellow
 }
 
 Write-Host ""
@@ -193,8 +254,8 @@ if ([string]::IsNullOrWhiteSpace($drive)) {
     Stop-Bootstrap "Backup drive is required."
 }
 
-if ($drive -eq "C") {
-    Stop-Bootstrap "C: drive is blocked for backups."
+if ($blockedBackupDrives -contains $drive) {
+    Stop-Bootstrap "$drive`: drive is not allowed for backups. Blocked drives: $($blockedBackupDrives -join ', ')"
 }
 
 if ($drive -notmatch "^[A-Z]$") {
@@ -204,6 +265,10 @@ if ($drive -notmatch "^[A-Z]$") {
 $driveRoot = "$drive`:\"
 if (-not (Test-Path -LiteralPath $driveRoot -PathType Container)) {
     Stop-Bootstrap "Drive not found: $driveRoot"
+}
+
+if (-not ($safeBackupDrives.Name -contains $drive)) {
+    Stop-Bootstrap "$drive`: is not in the safe backup drive list."
 }
 
 $backupRoot = Join-Path $driveRoot "VM_MASTER_BACKUP"
@@ -216,7 +281,7 @@ Write-Step "Creating backup root" {
 # -----------------------------------------
 $config = [ordered]@{
     SystemName       = "HV-LazyBackup"
-    Version          = "1.2"
+    Version          = "1.3"
     VMName           = $vmName
     BackupPath       = $backupRoot
     InstallPath      = $installRoot
@@ -227,6 +292,8 @@ $config = [ordered]@{
     LogFile          = $logFile
     Created          = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
     BlockedDrive     = "C"
+    BlockedDrives    = $blockedBackupDrives
+    VMStorageDrives  = $vmStorageDrives
     BackupFolderName = "VM_MASTER_BACKUP"
 }
 
@@ -257,7 +324,26 @@ function Get-HVLazyConfig {
         throw "Missing config.json at $ConfigPath"
     }
 
-    return Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+    $config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+    $config | Add-Member -NotePropertyName ConfigPath -NotePropertyValue $ConfigPath -Force
+    return $config
+}
+
+function Save-HVLazyConfig {
+    param([Parameter(Mandatory = $true)][pscustomobject]$Config)
+
+    if ([string]::IsNullOrWhiteSpace($Config.ConfigPath)) {
+        throw "ConfigPath is not available; cannot save config.json."
+    }
+
+    $configToSave = [ordered]@{}
+    foreach ($property in $Config.PSObject.Properties) {
+        if ($property.Name -ne "ConfigPath") {
+            $configToSave[$property.Name] = $property.Value
+        }
+    }
+
+    $configToSave | ConvertTo-Json -Depth 10 | Out-File -FilePath $Config.ConfigPath -Encoding UTF8 -Force
 }
 
 function Write-HVLazyLog {
@@ -290,6 +376,79 @@ function Stop-HVLazy {
     exit 1
 }
 
+function Get-HVLazyBlockedDrives {
+    param([Parameter(Mandatory = $true)][pscustomobject]$Config)
+
+    $blocked = New-Object System.Collections.Generic.List[string]
+
+    foreach ($drive in @($Config.BlockedDrive) + @($Config.BlockedDrives) + @($Config.VMStorageDrives)) {
+        if ([string]::IsNullOrWhiteSpace([string]$drive)) {
+            continue
+        }
+
+        $normalized = ([string]$drive).Trim().TrimEnd(":").ToUpperInvariant()
+        if ($normalized -match "^[A-Z]$" -and -not $blocked.Contains($normalized)) {
+            $blocked.Add($normalized)
+        }
+    }
+
+    if (-not $blocked.Contains("C")) {
+        $blocked.Add("C")
+    }
+
+    return @($blocked | Sort-Object -Unique)
+}
+
+function Assert-HVLazyBackupDriveAllowed {
+    param(
+        [Parameter(Mandatory = $true)][pscustomobject]$Config,
+        [Parameter(Mandatory = $true)][string]$Drive
+    )
+
+    $normalized = $Drive.Trim().TrimEnd(":").ToUpperInvariant()
+    if ($normalized -notmatch "^[A-Z]$") {
+        Stop-HVLazy -Config $Config -Message "Backup drive must be a single drive letter."
+    }
+
+    $blocked = @(Get-HVLazyBlockedDrives -Config $Config)
+    if ($blocked -contains $normalized) {
+        Stop-HVLazy -Config $Config -Message "$normalized`: drive is not allowed for backups. Blocked drives: $($blocked -join ', ')"
+    }
+
+    $driveRoot = "$normalized`:\"
+    if (-not (Test-Path -LiteralPath $driveRoot -PathType Container)) {
+        Stop-HVLazy -Config $Config -Message "Backup drive not found: $driveRoot"
+    }
+
+    return $normalized
+}
+
+function Get-HVLazySafeBackupDrives {
+    param([Parameter(Mandatory = $true)][pscustomobject]$Config)
+
+    $blocked = @(Get-HVLazyBlockedDrives -Config $Config)
+    return @(Get-PSDrive -PSProvider FileSystem |
+        Where-Object { $blocked -notcontains $_.Name.ToUpperInvariant() } |
+        Sort-Object Name)
+}
+
+function Set-HVLazyBackupDrive {
+    param(
+        [Parameter(Mandatory = $true)][pscustomobject]$Config,
+        [Parameter(Mandatory = $true)][string]$BackupDrive
+    )
+
+    $drive = Assert-HVLazyBackupDriveAllowed -Config $Config -Drive $BackupDrive
+    $backupRoot = Join-Path "$drive`:\" $Config.BackupFolderName
+    New-Item -ItemType Directory -Force -Path $backupRoot | Out-Null
+
+    $Config.BackupPath = $backupRoot
+    Save-HVLazyConfig -Config $Config
+    Write-HVLazyLog -Config $Config -Message "Configured backup drive changed to $drive`: ($backupRoot)"
+
+    return $Config
+}
+
 function Resolve-HVLazyBackupRoot {
     param(
         [Parameter(Mandatory = $true)][pscustomobject]$Config,
@@ -300,21 +459,8 @@ function Resolve-HVLazyBackupRoot {
         return $Config.BackupPath
     }
 
-    $drive = $BackupDrive.Trim().TrimEnd(":").ToUpperInvariant()
-    if ($drive -eq $Config.BlockedDrive) {
-        Stop-HVLazy -Config $Config -Message "$($Config.BlockedDrive): drive is blocked for backups."
-    }
-
-    if ($drive -notmatch "^[A-Z]$") {
-        Stop-HVLazy -Config $Config -Message "Backup drive override must be a single drive letter."
-    }
-
-    $driveRoot = "$drive`:\"
-    if (-not (Test-Path -LiteralPath $driveRoot -PathType Container)) {
-        Stop-HVLazy -Config $Config -Message "Backup drive not found: $driveRoot"
-    }
-
-    return (Join-Path $driveRoot $Config.BackupFolderName)
+    $drive = Assert-HVLazyBackupDriveAllowed -Config $Config -Drive $BackupDrive
+    return (Join-Path "$drive`:\" $Config.BackupFolderName)
 }
 
 function Get-HVLazyVM {
@@ -444,7 +590,7 @@ function Get-HVLazyBackupHistory {
     return @(Get-ChildItem -LiteralPath $backupRoot -Directory -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
 }
 
-Export-ModuleMember -Function Get-HVLazyConfig, Write-HVLazyLog, Stop-HVLazy, Resolve-HVLazyBackupRoot, Get-HVLazyVM, Get-HVLazyVMState, Export-HVLazyVMStateReport, Invoke-HVLazyBackup, Test-HVLazyBackup, Get-HVLazyBackupVhdx, Get-HVLazyBackupHistory
+Export-ModuleMember -Function Get-HVLazyConfig, Save-HVLazyConfig, Write-HVLazyLog, Stop-HVLazy, Get-HVLazyBlockedDrives, Assert-HVLazyBackupDriveAllowed, Get-HVLazySafeBackupDrives, Set-HVLazyBackupDrive, Resolve-HVLazyBackupRoot, Get-HVLazyVM, Get-HVLazyVMState, Export-HVLazyVMStateReport, Invoke-HVLazyBackup, Test-HVLazyBackup, Get-HVLazyBackupVhdx, Get-HVLazyBackupHistory
 '@
 
 $helpersScript = @'
@@ -525,14 +671,16 @@ $config = Get-HVLazyConfig -ConfigPath $ConfigPath
 function Show-HVLazyMenu {
     Write-Host ""
     Write-Host "======= HV-LAZYBACKUP - MAIN MENU =======" -ForegroundColor Cyan
+    Write-Host "Current backup path: $($config.BackupPath)" -ForegroundColor DarkCyan
     Write-Host "1. Run Backup Now"
     Write-Host "2. Verify Last Backup"
     Write-Host "3. View Backup History"
     Write-Host "4. Check VM State"
     Write-Host "5. Export VM State Report"
     Write-Host "6. Open Logs"
-    Write-Host "7. Settings / Configuration"
-    Write-Host "8. Exit"
+    Write-Host "7. Change Backup Drive"
+    Write-Host "8. Settings / Configuration"
+    Write-Host "9. Exit"
     Write-Host ""
 }
 
@@ -557,6 +705,50 @@ function Open-Logs {
     }
 
     Get-Content -LiteralPath $config.LogFile -Tail 50
+}
+
+function Change-BackupDrive {
+    $safeDrives = @(Get-HVLazySafeBackupDrives -Config $config)
+    $blockedDrives = @(Get-HVLazyBlockedDrives -Config $config)
+
+    Write-Host ""
+    Write-Host "Safe backup drives:" -ForegroundColor Cyan
+
+    if ($safeDrives.Count -eq 0) {
+        Write-Host "No safe backup drives are available." -ForegroundColor Red
+        Write-Host "Blocked drives: $($blockedDrives -join ', ')" -ForegroundColor Yellow
+        return
+    }
+
+    for ($i = 0; $i -lt $safeDrives.Count; $i++) {
+        $drive = $safeDrives[$i]
+        Write-Host ("{0}. {1}: {2}" -f ($i + 1), $drive.Name, $drive.Root)
+    }
+
+    Write-Host ""
+    Write-Host "Blocked drives: $($blockedDrives -join ', ')" -ForegroundColor Yellow
+    Write-Host "C: and VM storage drive(s) are not valid backup targets." -ForegroundColor Yellow
+    Write-Host ""
+
+    $selection = Read-Host "Select a backup drive number or letter"
+    if ([string]::IsNullOrWhiteSpace($selection)) {
+        Write-Host "Backup drive unchanged." -ForegroundColor Yellow
+        return
+    }
+
+    $selectedDrive = $selection.Trim().TrimEnd(":").ToUpperInvariant()
+    if ($selectedDrive -match "^\d+$") {
+        $index = [int]$selectedDrive - 1
+        if ($index -lt 0 -or $index -ge $safeDrives.Count) {
+            Write-Host "Invalid drive selection." -ForegroundColor Yellow
+            return
+        }
+
+        $selectedDrive = $safeDrives[$index].Name
+    }
+
+    $script:config = Set-HVLazyBackupDrive -Config $config -BackupDrive $selectedDrive
+    Write-Host "Backup path updated: $($config.BackupPath)" -ForegroundColor Green
 }
 
 if ($RunBackup) {
@@ -589,7 +781,7 @@ if ($ExportState) {
 
 do {
     Show-HVLazyMenu
-    $choice = Read-Host "Select an option [1-8]"
+    $choice = Read-Host "Select an option [1-9]"
 
     switch ($choice) {
         "1" { Invoke-HVLazyBackup -Config $config -BackupDrive $BackupDrive | Out-Null }
@@ -612,16 +804,17 @@ do {
             Write-Host "VM state report written: $report" -ForegroundColor Green
         }
         "6" { Open-Logs }
-        "7" { Show-Settings }
-        "8" { break }
+        "7" { Change-BackupDrive }
+        "8" { Show-Settings }
+        "9" { break }
         default { Write-Host "Invalid option." -ForegroundColor Yellow }
     }
 
-    if ($choice -ne "8") {
+    if ($choice -ne "9") {
         Write-Host ""
         Read-Host "Press ENTER to continue" | Out-Null
     }
-} while ($choice -ne "8")
+} while ($choice -ne "9")
 '@
 
 $runtimeReadme = @'

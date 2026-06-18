@@ -31,8 +31,8 @@ The bootloader:
 
 - Detects Hyper-V and lists available VMs.
 - Lets you choose the target VM.
-- Lets you choose a backup drive.
-- Blocks `C:\` as a backup target.
+- Lets you choose a safe backup drive.
+- Excludes `C:\` and any drive that hosts the selected VM's virtual disks from backup drive choices.
 - Generates config, folders, scripts, helper module, logs, reports, and runtime docs.
 - Validates every generated PowerShell file before finishing.
 - Fails clearly if generation fails.
@@ -93,8 +93,9 @@ That opens the daily operation menu:
 4. Check VM State
 5. Export VM State Report
 6. Open Logs
-7. Settings / Configuration
-8. Exit
+7. Change Backup Drive
+8. Settings / Configuration
+9. Exit
 ```
 
 ---
@@ -131,7 +132,15 @@ Export a VM state report:
 
 The configured backup root comes from `config.json`.
 
-To temporarily use another selected drive:
+The bootloader and runtime menu only allow safe backup drives. `C:\` and the drive or drives where the selected VM stores its virtual disks are blocked.
+
+To change the saved default backup drive, use option `7. Change Backup Drive` in the generated menu:
+
+```powershell
+.\scripts\Backup-VM.ps1
+```
+
+To temporarily use another safe selected drive:
 
 ```powershell
 .\scripts\Backup-VM.ps1 -RunBackup -BackupDrive X
@@ -168,6 +177,8 @@ X:\VM_MASTER_BACKUP\GrizTechW-MASTER-2026-06-16_12-03\
 - Admin expected.
 - Hyper-V discovery and VM validation.
 - `C:\` backup drive blocked.
+- VM storage drive blocked as a backup target.
+- Unsafe drives are hidden from backup drive selection.
 - Safe VM stop before export.
 - Generated file validation.
 - Runtime logging.
@@ -178,7 +189,7 @@ X:\VM_MASTER_BACKUP\GrizTechW-MASTER-2026-06-16_12-03\
 
 # Status
 
-Release-Safe Bootloader System v1.2
+Release-Safe Bootloader System v1.3
 
 ---
 
